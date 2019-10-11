@@ -26,7 +26,7 @@ defmodule PhoenixSwagger.Validator do
   @table :validator_table
 
   @doc """
-  The `parse_swagger_schema/1` takes path or list of paths to a swagger schema(s), 
+  The `parse_swagger_schema/1` takes path or list of paths to a swagger schema(s),
   parses it/them into ex_json_schema format and store to the `validator_table` ets
   table.
 
@@ -98,46 +98,41 @@ defmodule PhoenixSwagger.Validator do
   defp collect_schema_attrs(schema) do
     Enum.map(schema["paths"], fn({path, data}) ->
       Enum.map(Map.keys(data), fn(method) ->
-        parameters = data[method]["parameters"]
-        # we may have a request without parameters, so nothing to validate
-        # in this case
-        if parameters == nil do
-          []
-        else
-          # Let's go through requests parameters from swagger schema
-          # and collect it into json schema properties.
-          properties = Enum.reduce(parameters, %{}, fn(parameter, acc) ->
-            acc = if parameter["type"] == nil do
-                    ref = String.split(parameter["schema"]["$ref"], "/") |> List.last
-                    Map.merge(acc, schema["definitions"][ref])
-                  else
-                    acc
-                  end
+        parameters = data[method]["parameters"] || []
+
+        # Let's go through requests parameters from swagger schema
+        # and collect it into json schema properties.
+        properties = Enum.reduce(parameters, %{}, fn(parameter, acc) ->
+          acc = if parameter["type"] == nil do
+                  ref = String.split(parameter["schema"]["$ref"], "/") |> List.last
+                  Map.merge(acc, schema["definitions"][ref])
+                else
+                  acc
+                end
+          acc
+        end)
+        # collect request primitive parameters which do not refer to `definitions`
+        # these are mostly parameters from query string
+        properties = Enum.reduce(parameters, properties, fn(parameter, acc) ->
+          if parameter["type"] != nil do
+            collect_properties(acc, parameter)
+          else
             acc
-          end)
-          # collect request primitive parameters which do not refer to `definitions`
-          # these are mostly parameters from query string
-          properties = Enum.reduce(parameters, properties, fn(parameter, acc) ->
-            if parameter["type"] != nil do
-              collect_properties(acc, parameter)
-            else
-              acc
-            end
-          end)
-          # actually all requests which have parameters are objects
-          properties = if properties["type"] == nil do
-                         Map.put_new(properties, "type", "object")
-                       else
-                         properties
-                       end
-          # store path concatenated with method. This allows us
-          # to identify the same resources with different http methods.
-          path = "/" <> method <> path
-          schema_object = Map.merge(%{"parameters" => parameters, "type" => "object", "definitions" => schema["definitions"]}, properties)
-          resolved_schema = ExJsonSchema.Schema.resolve(schema_object)
-          :ets.insert(@table, {path, schema["basePath"], resolved_schema})
-          {path, resolved_schema}
-        end
+          end
+        end)
+        # actually all requests which have parameters are objects
+        properties = if properties["type"] == nil do
+                       Map.put_new(properties, "type", "object")
+                     else
+                       properties
+                     end
+        # store path concatenated with method. This allows us
+        # to identify the same resources with different http methods.
+        path = "/" <> method <> path
+        schema_object = Map.merge(%{"parameters" => parameters, "type" => "object", "definitions" => schema["definitions"]}, properties)
+        resolved_schema = ExJsonSchema.Schema.resolve(schema_object)
+        :ets.insert(@table, {path, schema["basePath"], resolved_schema})
+        {path, resolved_schema}
       end)
     end) |> List.flatten
   end
